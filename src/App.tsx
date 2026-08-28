@@ -37,7 +37,7 @@ const examples: ExampleDefinition[] = [
     value: 'b2b',
     label: 'bizBox → bizBox',
     description: 'B2B testni primer',
-    file: 'bizbox-to-bizbox-5-6.zip',
+    file: 'bizbox-to-bizbox-6-5.zip',
   },
   {
     value: 'b2g',
@@ -52,10 +52,10 @@ const examples: ExampleDefinition[] = [
     file: 'bizbox-to-odprema.zip',
   },
   {
-    value: 'banketo',
-    label: 'bizBox → Banketo',
+    value: 'bankefo',
+    label: 'bizBox → BankeFO',
     description: 'Testni primer',
-    file: 'bizbox-to-banketo.zip',
+    file: 'bizbox-to-bankefo.zip',
   },
 ]
 
