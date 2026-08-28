@@ -25,6 +25,40 @@ type PartyData = {
   bic: string
 }
 
+type ExampleDefinition = {
+  value: string
+  label: string
+  description: string
+  file: string
+}
+
+const examples: ExampleDefinition[] = [
+  {
+    value: 'b2b',
+    label: 'bizBox → bizBox',
+    description: 'B2B testni primer',
+    file: 'bizbox-to-bizbox-5-6.zip',
+  },
+  {
+    value: 'b2g',
+    label: 'bizBox → UJP',
+    description: 'B2G testni primer',
+    file: 'bizbox-to-ujp-b2g.zip',
+  },
+  {
+    value: 'odprema',
+    label: 'bizBox → Odprema',
+    description: 'Testni primer odpreme',
+    file: 'bizbox-to-odprema.zip',
+  },
+  {
+    value: 'banketo',
+    label: 'bizBox → Banketo',
+    description: 'Testni primer',
+    file: 'bizbox-to-banketo.zip',
+  },
+]
+
 function getChildrenByLocalName(
   element: Element,
   localName: string,
@@ -334,6 +368,29 @@ function getEnvelopeHeader(
     envelopeDocument.documentElement,
     'header',
   )
+}
+
+function removeEnvelopeId(
+  envelopeDocument: XMLDocument,
+): boolean {
+  const header =
+    getEnvelopeHeader(
+      envelopeDocument,
+    )
+
+  if (!header) return false
+
+  const idElement =
+    getFirstChildByLocalName(
+      header,
+      'id',
+    )
+
+  if (!idElement) return false
+
+  header.removeChild(idElement)
+
+  return true
 }
 
 function getEnvelopeSide(
@@ -778,7 +835,10 @@ function updateEnvelopeBankData(
           'e_address1',
         )
 
-      if (eAddress1) {
+      if (
+        eAddress1 &&
+        party.iban
+      ) {
         const currentValue =
           eAddress1.textContent?.trim() ?? ''
 
@@ -911,9 +971,7 @@ function InputField({
 
       <input
         value={value}
-        placeholder={
-          placeholder ?? ''
-        }
+        placeholder={placeholder ?? ''}
         onChange={(event) =>
           onChange(
             event.target.value,
@@ -1243,6 +1301,226 @@ function App() {
       [],
     )
 
+  const [
+    selectedExample,
+    setSelectedExample,
+  ] =
+    useState('')
+
+  const [
+    loadingExample,
+    setLoadingExample,
+  ] =
+    useState(false)
+
+  async function loadZip(
+    data: Blob | ArrayBuffer,
+    displayFileName: string,
+  ) {
+    setError(null)
+    setWarnings([])
+
+    const zip =
+      await JSZip.loadAsync(
+        data,
+      )
+
+    setOriginalZip(zip)
+
+    const files =
+      Object.values(
+        zip.files,
+      )
+        .filter(
+          (entry) =>
+            !entry.dir,
+        )
+        .map(
+          (entry) =>
+            entry.name,
+        )
+
+    setFileName(
+      displayFileName,
+    )
+
+    setZipFiles(files)
+
+    const parser =
+      new DOMParser()
+
+    let envelopeName:
+      | string
+      | null = null
+
+    let envelopeXml:
+      | string
+      | null = null
+
+    for (const name of files) {
+      if (
+        !name
+          .toLowerCase()
+          .endsWith('.xml')
+      ) {
+        continue
+      }
+
+      const entry =
+        zip.file(name)
+
+      if (!entry) continue
+
+      const xmlText =
+        await entry.async(
+          'text',
+        )
+
+      const xml =
+        parser.parseFromString(
+          xmlText,
+          'application/xml',
+        )
+
+      if (
+        xml.querySelector(
+          'parsererror',
+        )
+      ) {
+        continue
+      }
+
+      if (
+        xml.documentElement.localName.toLowerCase() ===
+        'envelope'
+      ) {
+        envelopeName = name
+        envelopeXml = xmlText
+        break
+      }
+    }
+
+    if (
+      !envelopeName ||
+      !envelopeXml
+    ) {
+      throw new Error(
+        'V ZIP-u ni bila najdena bizBox ovojnica.',
+      )
+    }
+
+    const envelopeDocument =
+      parser.parseFromString(
+        envelopeXml,
+        'application/xml',
+      )
+
+    const documentElement =
+      getFirstChildByLocalName(
+        envelopeDocument.documentElement,
+        'document',
+      )
+
+    if (!documentElement) {
+      throw new Error(
+        'V ovojnici ni bil najden glavni dokument.',
+      )
+    }
+
+    const documentFile =
+      getDescendantText(
+        documentElement,
+        ['file_name'],
+      )
+
+    const documentType =
+      getDescendantText(
+        documentElement,
+        ['type'],
+      )
+
+    const documentFormat =
+      getDescendantText(
+        documentElement,
+        ['format'],
+      )
+
+    if (!documentFile) {
+      throw new Error(
+        'V ovojnici manjka file_name.',
+      )
+    }
+
+    const invoiceEntry =
+      zip.file(
+        documentFile,
+      )
+
+    if (!invoiceEntry) {
+      throw new Error(
+        `Datoteka ${documentFile} ni bila najdena.`,
+      )
+    }
+
+    const invoiceXml =
+      await invoiceEntry.async(
+        'text',
+      )
+
+    const invoiceDocument =
+      parser.parseFromString(
+        invoiceXml,
+        'application/xml',
+      )
+
+    if (
+      invoiceDocument.querySelector(
+        'parsererror',
+      )
+    ) {
+      throw new Error(
+        'Glavni eSLOG XML ni veljaven XML.',
+      )
+    }
+
+    const parsedSeller =
+      parseParty(
+        invoiceDocument,
+        envelopeDocument,
+        'SE',
+      )
+
+    const parsedBuyer =
+      parseParty(
+        invoiceDocument,
+        envelopeDocument,
+        'BY',
+      )
+
+    if (!parsedSeller) {
+      throw new Error(
+        'Pošiljatelj SE ni bil najden.',
+      )
+    }
+
+    if (!parsedBuyer) {
+      throw new Error(
+        'Prejemnik BY ni bil najden.',
+      )
+    }
+
+    setSeller(parsedSeller)
+    setBuyer(parsedBuyer)
+
+    setDocumentInfo({
+      envelopeFile:
+        envelopeName,
+      documentFile,
+      documentType,
+      documentFormat,
+    })
+  }
+
   async function handleFileChange(
     event: ChangeEvent<HTMLInputElement>,
   ) {
@@ -1264,217 +1542,12 @@ function App() {
     }
 
     try {
-      setError(null)
-      setWarnings([])
+      setSelectedExample('')
 
-      const zip =
-        await JSZip.loadAsync(
-          file,
-        )
-
-      setOriginalZip(
-        zip,
-      )
-
-      const files =
-        Object.values(
-          zip.files,
-        )
-          .filter(
-            (entry) =>
-              !entry.dir,
-          )
-          .map(
-            (entry) =>
-              entry.name,
-          )
-
-      setFileName(
+      await loadZip(
+        file,
         file.name,
       )
-
-      setZipFiles(
-        files,
-      )
-
-      const parser =
-        new DOMParser()
-
-      let envelopeName:
-        | string
-        | null = null
-
-      let envelopeXml:
-        | string
-        | null = null
-
-      for (const name of files) {
-        if (
-          !name
-            .toLowerCase()
-            .endsWith('.xml')
-        ) {
-          continue
-        }
-
-        const entry =
-          zip.file(name)
-
-        if (!entry) continue
-
-        const xmlText =
-          await entry.async(
-            'text',
-          )
-
-        const xml =
-          parser.parseFromString(
-            xmlText,
-            'application/xml',
-          )
-
-        if (
-          xml.querySelector(
-            'parsererror',
-          )
-        ) {
-          continue
-        }
-
-        if (
-          xml.documentElement.localName.toLowerCase() ===
-          'envelope'
-        ) {
-          envelopeName = name
-          envelopeXml = xmlText
-          break
-        }
-      }
-
-      if (
-        !envelopeName ||
-        !envelopeXml
-      ) {
-        throw new Error(
-          'V ZIP-u ni bila najdena bizBox ovojnica.',
-        )
-      }
-
-      const envelopeDocument =
-        parser.parseFromString(
-          envelopeXml,
-          'application/xml',
-        )
-
-      const documentElement =
-        getFirstChildByLocalName(
-          envelopeDocument.documentElement,
-          'document',
-        )
-
-      if (!documentElement) {
-        throw new Error(
-          'V ovojnici ni bil najden glavni dokument.',
-        )
-      }
-
-      const documentFile =
-        getDescendantText(
-          documentElement,
-          ['file_name'],
-        )
-
-      const documentType =
-        getDescendantText(
-          documentElement,
-          ['type'],
-        )
-
-      const documentFormat =
-        getDescendantText(
-          documentElement,
-          ['format'],
-        )
-
-      if (!documentFile) {
-        throw new Error(
-          'V ovojnici manjka file_name.',
-        )
-      }
-
-      const invoiceEntry =
-        zip.file(
-          documentFile,
-        )
-
-      if (!invoiceEntry) {
-        throw new Error(
-          `Datoteka ${documentFile} ni bila najdena.`,
-        )
-      }
-
-      const invoiceXml =
-        await invoiceEntry.async(
-          'text',
-        )
-
-      const invoiceDocument =
-        parser.parseFromString(
-          invoiceXml,
-          'application/xml',
-        )
-
-      if (
-        invoiceDocument.querySelector(
-          'parsererror',
-        )
-      ) {
-        throw new Error(
-          'Glavni eSLOG XML ni veljaven XML.',
-        )
-      }
-
-      const parsedSeller =
-        parseParty(
-          invoiceDocument,
-          envelopeDocument,
-          'SE',
-        )
-
-      const parsedBuyer =
-        parseParty(
-          invoiceDocument,
-          envelopeDocument,
-          'BY',
-        )
-
-      if (!parsedSeller) {
-        throw new Error(
-          'Pošiljatelj SE ni bil najden.',
-        )
-      }
-
-      if (!parsedBuyer) {
-        throw new Error(
-          'Prejemnik BY ni bil najden.',
-        )
-      }
-
-      setSeller(
-        parsedSeller,
-      )
-
-      setBuyer(
-        parsedBuyer,
-      )
-
-      setDocumentInfo({
-        envelopeFile:
-          envelopeName,
-        documentFile,
-        documentType,
-        documentFormat,
-      })
     } catch (err) {
       console.error(err)
 
@@ -1483,6 +1556,62 @@ function App() {
           ? err.message
           : 'Napaka pri analizi ZIP-a.',
       )
+    }
+  }
+
+  async function handleExampleChange(
+    event: ChangeEvent<HTMLSelectElement>,
+  ) {
+    const value =
+      event.target.value
+
+    setSelectedExample(value)
+
+    if (!value) return
+
+    const selected =
+      examples.find(
+        (example) =>
+          example.value === value,
+      )
+
+    if (!selected) return
+
+    try {
+      setLoadingExample(true)
+      setError(null)
+
+      const baseUrl =
+        import.meta.env.BASE_URL
+
+      const response =
+        await fetch(
+          `${baseUrl}examples/${selected.file}`,
+        )
+
+      if (!response.ok) {
+        throw new Error(
+          `Primera ${selected.file} ni bilo mogoče naložiti.`,
+        )
+      }
+
+      const blob =
+        await response.blob()
+
+      await loadZip(
+        blob,
+        selected.file,
+      )
+    } catch (err) {
+      console.error(err)
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Napaka pri nalaganju primera.',
+      )
+    } finally {
+      setLoadingExample(false)
     }
   }
 
@@ -1546,6 +1675,10 @@ function App() {
           envelopeXml,
           'application/xml',
         )
+
+      removeEnvelopeId(
+        envelopeDocument,
+      )
 
       const newWarnings = [
         ...updateInvoiceParty(
@@ -1672,6 +1805,114 @@ function App() {
       </section>
 
       <section className="upload-card">
+        <div
+          style={{
+            padding:
+              '16px 18px 8px',
+          }}
+        >
+          <label
+            className="input-field"
+            style={{
+              maxWidth: '560px',
+            }}
+          >
+            <span>
+              Pripravljen testni primer
+            </span>
+
+            <select
+              value={
+                selectedExample
+              }
+              disabled={
+                loadingExample
+              }
+              onChange={
+                handleExampleChange
+              }
+              style={{
+                width: '100%',
+                boxSizing:
+                  'border-box',
+                padding:
+                  '12px 13px',
+                border:
+                  '1px solid #d7dfe7',
+                borderRadius:
+                  '8px',
+                background:
+                  '#ffffff',
+                color:
+                  '#202a35',
+                font:
+                  'inherit',
+                fontSize:
+                  '14px',
+                cursor:
+                  'pointer',
+              }}
+            >
+              <option value="">
+                Izberi primer ...
+              </option>
+
+              {examples.map(
+                (example) => (
+                  <option
+                    key={
+                      example.value
+                    }
+                    value={
+                      example.value
+                    }
+                  >
+                    {example.label} —{' '}
+                    {
+                      example.description
+                    }
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+
+          <div
+            style={{
+              margin:
+                '14px 0 6px',
+              display: 'flex',
+              alignItems:
+                'center',
+              gap: '12px',
+              color:
+                '#929ca6',
+              fontSize:
+                '12px',
+            }}
+          >
+            <span
+              style={{
+                flex: 1,
+                height: '1px',
+                background:
+                  '#e5eaf0',
+              }}
+            />
+
+            ALI
+
+            <span
+              style={{
+                flex: 1,
+                height: '1px',
+                background:
+                  '#e5eaf0',
+              }}
+            />
+          </div>
+        </div>
+
         <label className="drop-zone">
           <input
             type="file"
@@ -1688,7 +1929,7 @@ function App() {
           <div>
             <span className="drop-title">
               {fileName ??
-                'Izberi bizBox ZIP'}
+                'Izberi svoj bizBox ZIP'}
             </span>
 
             <span className="drop-description">
@@ -1702,6 +1943,22 @@ function App() {
           </span>
         </label>
       </section>
+
+      {loadingExample && (
+        <section className="message-card">
+          <span>↻</span>
+
+          <div>
+            <strong>
+              Nalagam primer
+            </strong>
+
+            <p>
+              Testni ZIP se nalaga.
+            </p>
+          </div>
+        </section>
+      )}
 
       {error && (
         <section className="message-card error-card">
@@ -1791,7 +2048,10 @@ function App() {
         <>
           <section className="parties-grid">
             <PartyEditor
-              title={seller.name || 'Pošiljatelj'}
+              title={
+                seller.name ||
+                'Pošiljatelj'
+              }
               roleLabel="Pošiljatelj"
               party={seller}
               setParty={
@@ -1800,7 +2060,10 @@ function App() {
             />
 
             <PartyEditor
-              title={buyer.name || 'Prejemnik'}
+              title={
+                buyer.name ||
+                'Prejemnik'
+              }
               roleLabel="Prejemnik"
               party={buyer}
               setParty={
@@ -1817,7 +2080,9 @@ function App() {
 
               <p>
                 Originalni ZIP ostane
-                nespremenjen.
+                nespremenjen. ID
+                ovojnice se samodejno
+                odstrani.
               </p>
             </div>
 
